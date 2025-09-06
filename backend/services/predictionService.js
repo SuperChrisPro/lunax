@@ -158,25 +158,45 @@ class PredictionService {
       }, 0) / totalCycles;
       const cycleStd = Math.sqrt(variance);
 
-      // 计算平均生理期长度
-      const [periodLengths] = await pool.execute(
-        `SELECT AVG(DATEDIFF(record_date, 
-          (SELECT MAX(record_date) FROM period_records p2 
-           WHERE p2.user_id = ? AND p2.is_period_day = TRUE 
-           AND p2.record_date < period_records.record_date))) as avg_period_length
-         FROM period_records 
-         WHERE user_id = ? AND is_period_day = TRUE`,
-        [userId, userId]
-      );
+  // 计算平均经期长度（应用层计算）
+  let periodDurations = [];
+  let currentLength = 0;
+  let lastDate = null;
 
-      const avgPeriodLength = periodLengths[0]?.avg_period_length || 5;
+  for (const record of periods) {
+    const currentDate = moment(record.record_date);
+    if (lastDate && currentDate.diff(lastDate, 'days') === 1) {
+      currentLength++;
+    } else {
+      if (currentLength > 0) {
+        periodDurations.push(currentLength);
+      }
+      currentLength = 1;
+    }
+    lastDate = currentDate;
+  }
+  if (currentLength > 0) {
+    periodDurations.push(currentLength);
+  }
+
+  const avgPeriodLength = periodDurations.length > 0 
+    ? periodDurations.reduce((a, b) => a + b, 0) / periodDurations.length 
+    : 5;
+
+  // 计算经期长度标准差
+  let periodLengthStd = 0;
+  if (periodDurations.length > 1) {
+    const mean = avgPeriodLength;
+    const variance = periodDurations.reduce((sum, len) => sum + Math.pow(len - mean, 2), 0) / periodDurations.length;
+    periodLengthStd = Math.sqrt(variance);
+  }
 
       // 更新或插入统计数据
       await pool.execute(
         `INSERT INTO user_cycle_stats 
          (user_id, total_cycles, average_cycle_length, cycle_length_std, 
-          average_period_length, last_period_start, last_period_end)
-         VALUES (?, ?, ?, ?, ?, 
+          average_period_length, period_length_std, last_period_start, last_period_end)
+         VALUES (?, ?, ?, ?, ?, ?, 
                  (SELECT MAX(record_date) FROM period_records WHERE user_id = ? AND is_period_day = TRUE),
                  (SELECT MAX(record_date) FROM period_records WHERE user_id = ? AND is_period_day = TRUE))
          ON DUPLICATE KEY UPDATE
@@ -184,11 +204,12 @@ class PredictionService {
          average_cycle_length = VALUES(average_cycle_length),
          cycle_length_std = VALUES(cycle_length_std),
          average_period_length = VALUES(average_period_length),
+         period_length_std = VALUES(period_length_std),
          last_period_start = VALUES(last_period_start),
          last_period_end = VALUES(last_period_end),
          updated_at = CURRENT_TIMESTAMP`,
         [userId, totalCycles, avgCycleLength.toFixed(2), cycleStd.toFixed(2), 
-         avgPeriodLength, userId, userId]
+         avgPeriodLength.toFixed(2), periodLengthStd.toFixed(2), userId, userId]
       );
 
       return { 
