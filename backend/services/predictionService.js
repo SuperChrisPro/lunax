@@ -1,4 +1,4 @@
-const { pool } = require('../config/database');
+const { getDb } = require('../config/database');
 const moment = require('moment');
 
 class PredictionService {
@@ -56,25 +56,26 @@ class PredictionService {
    * 获取用户周期统计数据
    */
   async getUserCycleStats(userId) {
-    const [rows] = await pool.execute(
-      'SELECT * FROM user_cycle_stats WHERE user_id = ?',
-      [userId]
-    );
-    return rows[0];
+    const db = await getDb();
+    const userCycleStats = db.collection('user_cycle_stats');
+    return userCycleStats.findOne({ user_id: userId });
   }
 
   /**
    * 获取最后一次生理期记录
    */
   async getLastPeriod(userId) {
-    const [rows] = await pool.execute(
-      `SELECT record_date as start_date 
-       FROM period_records 
-       WHERE user_id = ? AND is_period_day = TRUE 
-       ORDER BY record_date DESC LIMIT 1`,
-      [userId]
-    );
-    return rows[0];
+    const db = await getDb();
+    const periodRecords = db.collection('period_records');
+    const result = await periodRecords.find({ 
+      user_id: userId, 
+      is_period_day: true 
+    })
+    .sort({ record_date: -1 })
+    .limit(1)
+    .toArray();
+    
+    return result[0] ? { start_date: result[0].record_date } : null;
   }
 
   /**
@@ -126,14 +127,16 @@ class PredictionService {
    */
   async updateUserCycleStats(userId) {
     try {
-      const [periods] = await pool.execute(
-        `SELECT record_date, 
-                ROW_NUMBER() OVER (ORDER BY record_date) as rn
-         FROM period_records 
-         WHERE user_id = ? AND is_period_day = TRUE 
-         ORDER BY record_date`,
-        [userId]
-      );
+      const db = await getDb();
+      const periodRecords = db.collection('period_records');
+      
+      // 获取所有经期记录
+      const periods = await periodRecords.find({ 
+        user_id: userId, 
+        is_period_day: true 
+      })
+      .sort({ record_date: 1 })
+      .toArray();
 
       if (periods.length < 2) {
         return { message: '数据不足，需要至少2次生理期记录' };
@@ -158,58 +161,61 @@ class PredictionService {
       }, 0) / totalCycles;
       const cycleStd = Math.sqrt(variance);
 
-  // 计算平均经期长度（应用层计算）
-  let periodDurations = [];
-  let currentLength = 0;
-  let lastDate = null;
+      // 计算平均经期长度（应用层计算）
+      let periodDurations = [];
+      let currentLength = 0;
+      let lastDate = null;
 
-  for (const record of periods) {
-    const currentDate = moment(record.record_date);
-    if (lastDate && currentDate.diff(lastDate, 'days') === 1) {
-      currentLength++;
-    } else {
+      for (const record of periods) {
+        const currentDate = moment(record.record_date);
+        if (lastDate && currentDate.diff(lastDate, 'days') === 1) {
+          currentLength++;
+        } else {
+          if (currentLength > 0) {
+            periodDurations.push(currentLength);
+          }
+          currentLength = 1;
+        }
+        lastDate = currentDate;
+      }
       if (currentLength > 0) {
         periodDurations.push(currentLength);
       }
-      currentLength = 1;
-    }
-    lastDate = currentDate;
-  }
-  if (currentLength > 0) {
-    periodDurations.push(currentLength);
-  }
 
-  const avgPeriodLength = periodDurations.length > 0 
-    ? periodDurations.reduce((a, b) => a + b, 0) / periodDurations.length 
-    : 5;
+      const avgPeriodLength = periodDurations.length > 0 
+        ? periodDurations.reduce((a, b) => a + b, 0) / periodDurations.length 
+        : 5;
 
-  // 计算经期长度标准差
-  let periodLengthStd = 0;
-  if (periodDurations.length > 1) {
-    const mean = avgPeriodLength;
-    const variance = periodDurations.reduce((sum, len) => sum + Math.pow(len - mean, 2), 0) / periodDurations.length;
-    periodLengthStd = Math.sqrt(variance);
-  }
+      // 计算经期长度标准差
+      let periodLengthStd = 0;
+      if (periodDurations.length > 1) {
+        const mean = avgPeriodLength;
+        const variance = periodDurations.reduce((sum, len) => sum + Math.pow(len - mean, 2), 0) / periodDurations.length;
+        periodLengthStd = Math.sqrt(variance);
+      }
+
+      // 获取最后一条经期记录
+      const lastPeriod = periods[periods.length - 1];
+      const lastPeriodDate = lastPeriod.record_date;
 
       // 更新或插入统计数据
-      await pool.execute(
-        `INSERT INTO user_cycle_stats 
-         (user_id, total_cycles, average_cycle_length, cycle_length_std, 
-          average_period_length, period_length_std, last_period_start, last_period_end)
-         VALUES (?, ?, ?, ?, ?, ?, 
-                 (SELECT MAX(record_date) FROM period_records WHERE user_id = ? AND is_period_day = TRUE),
-                 (SELECT MAX(record_date) FROM period_records WHERE user_id = ? AND is_period_day = TRUE))
-         ON DUPLICATE KEY UPDATE
-         total_cycles = VALUES(total_cycles),
-         average_cycle_length = VALUES(average_cycle_length),
-         cycle_length_std = VALUES(cycle_length_std),
-         average_period_length = VALUES(average_period_length),
-         period_length_std = VALUES(period_length_std),
-         last_period_start = VALUES(last_period_start),
-         last_period_end = VALUES(last_period_end),
-         updated_at = CURRENT_TIMESTAMP`,
-        [userId, totalCycles, avgCycleLength.toFixed(2), cycleStd.toFixed(2), 
-         avgPeriodLength.toFixed(2), periodLengthStd.toFixed(2), userId, userId]
+      const userCycleStats = db.collection('user_cycle_stats');
+      await userCycleStats.updateOne(
+        { user_id: userId },
+        {
+          $set: {
+            user_id: userId,
+            total_cycles: totalCycles,
+            average_cycle_length: avgCycleLength.toFixed(2),
+            cycle_length_std: cycleStd.toFixed(2),
+            average_period_length: avgPeriodLength.toFixed(2),
+            period_length_std: periodLengthStd.toFixed(2),
+            last_period_start: lastPeriodDate,
+            last_period_end: lastPeriodDate,
+            updated_at: new Date()
+          }
+        },
+        { upsert: true }
       );
 
       return { 
@@ -230,19 +236,17 @@ class PredictionService {
    */
   async savePrediction(userId, prediction) {
     try {
-      await pool.execute(
-        `INSERT INTO predictions 
-         (user_id, prediction_date, predicted_start_date, predicted_end_date, 
-          confidence_level, algorithm_version)
-         VALUES (?, CURDATE(), ?, ?, ?, ?)`,
-        [
-          userId,
-          prediction.nextPeriodStart,
-          prediction.nextPeriodEnd,
-          prediction.accuracy / 100,
-          prediction.algorithm
-        ]
-      );
+      const db = await getDb();
+      const predictions = db.collection('predictions');
+      await predictions.insertOne({
+        user_id: userId,
+        prediction_date: new Date().toISOString().split('T')[0],
+        predicted_start_date: prediction.nextPeriodStart,
+        predicted_end_date: prediction.nextPeriodEnd,
+        confidence_level: prediction.accuracy / 100,
+        algorithm_version: prediction.algorithm,
+        created_at: new Date()
+      });
     } catch (error) {
       console.error('保存预测记录失败:', error);
     }
