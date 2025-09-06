@@ -1,0 +1,9 @@
+[
+  "pages/Index",
+  "pages/RecordPeriod",
+  "pages/History",
+  "pages/Login",
+  "pages/Register",
+  "pages/Settings",
+  "pages/Dashboard"
+]

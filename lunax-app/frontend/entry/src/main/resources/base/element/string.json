@@ -1,0 +1,84 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "LunaX 月汐 - 您的智能生理期助手"
+    },
+    {
+      "name": "MainAbility_desc",
+      "value": "LunaX 月汐应用主能力"
+    },
+    {
+      "name": "MainAbility_label",
+      "value": "月汐 LunaX"
+    },
+    {
+      "name": "app_name",
+      "value": "月汐 LunaX"
+    },
+    {
+      "name": "login_title",
+      "value": "登录月汐"
+    },
+    {
+      "name": "register_title",
+      "value": "注册月汐"
+    },
+    {
+      "name": "phone_number_hint",
+      "value": "请输入手机号"
+    },
+    {
+      "name": "password_hint",
+      "value": "请输入密码"
+    },
+    {
+      "name": "login_button",
+      "value": "登录"
+    },
+    {
+      "name": "register_button",
+      "value": "注册"
+    },
+    {
+      "name": "next_period_prediction",
+      "value": "下次生理期预测"
+    },
+    {
+      "name": "record_today",
+      "value": "记录今天"
+    },
+    {
+      "name": "history_records",
+      "value": "历史记录"
+    },
+    {
+      "name": "view_calendar",
+      "value": "查看日历"
+    },
+    {
+      "name": "accuracy",
+      "value": "准确率"
+    },
+    {
+      "name": "flow_level",
+      "value": "流量程度"
+    },
+    {
+      "name": "symptoms",
+      "value": "症状"
+    },
+    {
+      "name": "notes",
+      "value": "备注"
+    },
+    {
+      "name": "save_record",
+      "value": "保存记录"
+    },
+    {
+      "name": "cancel",
+      "value": "取消"
+    }
+  ]
+}
