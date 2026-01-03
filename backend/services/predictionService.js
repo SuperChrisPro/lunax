@@ -1,4 +1,4 @@
-const { getDb } = require('../config/database');
+const { pool } = require('../config/database');
 const moment = require('moment');
 
 class PredictionService {
@@ -56,26 +56,27 @@ class PredictionService {
    * 获取用户周期统计数据
    */
   async getUserCycleStats(userId) {
-    const db = await getDb();
-    const userCycleStats = db.collection('user_cycle_stats');
-    return userCycleStats.findOne({ user_id: userId });
+    const result = await pool.query(
+      'SELECT * FROM user_cycle_stats WHERE user_id = $1',
+      [userId]
+    );
+    return result.rows[0] || null;
   }
 
   /**
    * 获取最后一次生理期记录
    */
   async getLastPeriod(userId) {
-    const db = await getDb();
-    const periodRecords = db.collection('period_records');
-    const result = await periodRecords.find({ 
-      user_id: userId, 
-      is_period_day: true 
-    })
-    .sort({ record_date: -1 })
-    .limit(1)
-    .toArray();
+    const result = await pool.query(
+      `SELECT record_date as start_date 
+       FROM period_records 
+       WHERE user_id = $1 AND is_period_day = TRUE 
+       ORDER BY record_date DESC 
+       LIMIT 1`,
+      [userId]
+    );
     
-    return result[0] ? { start_date: result[0].record_date } : null;
+    return result.rows[0] || null;
   }
 
   /**
@@ -127,16 +128,16 @@ class PredictionService {
    */
   async updateUserCycleStats(userId) {
     try {
-      const db = await getDb();
-      const periodRecords = db.collection('period_records');
-      
       // 获取所有经期记录
-      const periods = await periodRecords.find({ 
-        user_id: userId, 
-        is_period_day: true 
-      })
-      .sort({ record_date: 1 })
-      .toArray();
+      const periodsResult = await pool.query(
+        `SELECT record_date 
+         FROM period_records 
+         WHERE user_id = $1 AND is_period_day = TRUE 
+         ORDER BY record_date ASC`,
+        [userId]
+      );
+
+      const periods = periodsResult.rows;
 
       if (periods.length < 2) {
         return { message: '数据不足，需要至少2次生理期记录' };
@@ -198,24 +199,43 @@ class PredictionService {
       const lastPeriod = periods[periods.length - 1];
       const lastPeriodDate = lastPeriod.record_date;
 
+      // 确定数据充足性
+      let dataSufficiency = 'low';
+      if (totalCycles >= 50) {
+        dataSufficiency = 'high';
+      } else if (totalCycles >= 10) {
+        dataSufficiency = 'medium';
+      }
+
       // 更新或插入统计数据
-      const userCycleStats = db.collection('user_cycle_stats');
-      await userCycleStats.updateOne(
-        { user_id: userId },
-        {
-          $set: {
-            user_id: userId,
-            total_cycles: totalCycles,
-            average_cycle_length: avgCycleLength.toFixed(2),
-            cycle_length_std: cycleStd.toFixed(2),
-            average_period_length: avgPeriodLength.toFixed(2),
-            period_length_std: periodLengthStd.toFixed(2),
-            last_period_start: lastPeriodDate,
-            last_period_end: lastPeriodDate,
-            updated_at: new Date()
-          }
-        },
-        { upsert: true }
+      await pool.query(
+        `INSERT INTO user_cycle_stats 
+         (user_id, total_cycles, average_cycle_length, cycle_length_std, 
+          average_period_length, period_length_std, last_period_start, 
+          last_period_end, data_sufficiency, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
+         ON CONFLICT (user_id) 
+         DO UPDATE SET
+           total_cycles = EXCLUDED.total_cycles,
+           average_cycle_length = EXCLUDED.average_cycle_length,
+           cycle_length_std = EXCLUDED.cycle_length_std,
+           average_period_length = EXCLUDED.average_period_length,
+           period_length_std = EXCLUDED.period_length_std,
+           last_period_start = EXCLUDED.last_period_start,
+           last_period_end = EXCLUDED.last_period_end,
+           data_sufficiency = EXCLUDED.data_sufficiency,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          userId,
+          totalCycles,
+          avgCycleLength.toFixed(2),
+          cycleStd.toFixed(2),
+          avgPeriodLength.toFixed(2),
+          periodLengthStd.toFixed(2),
+          lastPeriodDate,
+          lastPeriodDate,
+          dataSufficiency
+        ]
       );
 
       return { 
@@ -236,17 +256,20 @@ class PredictionService {
    */
   async savePrediction(userId, prediction) {
     try {
-      const db = await getDb();
-      const predictions = db.collection('predictions');
-      await predictions.insertOne({
-        user_id: userId,
-        prediction_date: new Date().toISOString().split('T')[0],
-        predicted_start_date: prediction.nextPeriodStart,
-        predicted_end_date: prediction.nextPeriodEnd,
-        confidence_level: prediction.accuracy / 100,
-        algorithm_version: prediction.algorithm,
-        created_at: new Date()
-      });
+      await pool.query(
+        `INSERT INTO predictions 
+         (user_id, prediction_date, predicted_start_date, predicted_end_date, 
+          confidence_level, algorithm_version, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)`,
+        [
+          userId,
+          new Date().toISOString().split('T')[0],
+          prediction.nextPeriodStart,
+          prediction.nextPeriodEnd,
+          prediction.accuracy / 100,
+          prediction.algorithm
+        ]
+      );
     } catch (error) {
       console.error('保存预测记录失败:', error);
     }

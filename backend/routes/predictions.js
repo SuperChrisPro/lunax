@@ -34,21 +34,21 @@ router.get('/history', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const { limit = 30 } = req.query;
     
-    const [predictions] = await require('../config/database').pool.execute(
+    const predictions = await require('../config/database').pool.query(
       `SELECT prediction_date, predicted_start_date, predicted_end_date, 
               confidence_level, algorithm_version, actual_start_date, actual_end_date,
               accuracy_score
        FROM predictions 
-       WHERE user_id = ? 
+       WHERE user_id = $1 
        ORDER BY prediction_date DESC 
-       LIMIT ?`,
+       LIMIT $2`,
       [userId, parseInt(limit)]
     );
     
     res.json({
       success: true,
-      data: predictions,
-      count: predictions.length
+      data: predictions.rows,
+      count: predictions.rows.length
     });
   } catch (error) {
     console.error('获取历史预测失败:', error);

@@ -23,29 +23,32 @@ router.get('/', authenticateToken, async (req, res) => {
       SELECT id, record_date as date, flow_level as flowLevel, 
              symptoms, notes, created_at as createdAt
       FROM period_records 
-      WHERE user_id = ? AND is_period_day = TRUE
+      WHERE user_id = $1 AND is_period_day = TRUE
     `;
     let params = [userId];
+    let paramIndex = 2;
 
     if (startDate) {
-      query += ' AND record_date >= ?';
+      query += ` AND record_date >= $${paramIndex}`;
       params.push(startDate);
+      paramIndex++;
     }
 
     if (endDate) {
-      query += ' AND record_date <= ?';
+      query += ` AND record_date <= $${paramIndex}`;
       params.push(endDate);
+      paramIndex++;
     }
 
-    query += ' ORDER BY record_date DESC LIMIT ?';
+    query += ` ORDER BY record_date DESC LIMIT $${paramIndex}`;
     params.push(parseInt(limit));
 
-    const [records] = await pool.execute(query, params);
+    const records = await pool.query(query, params);
 
     res.json({
       success: true,
-      data: records,
-      count: records.length
+      data: records.rows,
+      count: records.rows.length
     });
   } catch (error) {
     console.error('获取生理期记录失败:', error);
@@ -72,12 +75,12 @@ router.post('/', authenticateToken, async (req, res) => {
     const { date, flowLevel, symptoms, notes } = value;
 
     // 检查是否已存在该日期的记录
-    const [existing] = await pool.execute(
-      'SELECT id FROM period_records WHERE user_id = ? AND record_date = ?',
+    const existing = await pool.query(
+      'SELECT id FROM period_records WHERE user_id = $1 AND record_date = $2',
       [userId, date]
     );
 
-    if (existing.length > 0) {
+    if (existing.rows.length > 0) {
       return res.status(409).json({
         success: false,
         error: '该日期已存在记录'
@@ -85,9 +88,9 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     // 插入记录
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO period_records (user_id, record_date, flow_level, symptoms, notes)
-       VALUES (?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
       [userId, date, flowLevel, JSON.stringify(symptoms || []), notes]
     );
 
@@ -97,7 +100,7 @@ router.post('/', authenticateToken, async (req, res) => {
     res.status(201).json({
       success: true,
       data: {
-        id: result.insertId,
+        id: result.rows[0].id,
         date,
         flowLevel,
         symptoms,
@@ -129,14 +132,14 @@ router.put('/:id', authenticateToken, async (req, res) => {
     const recordId = req.params.id;
     const { flowLevel, symptoms, notes } = value;
 
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `UPDATE period_records 
-       SET flow_level = ?, symptoms = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND user_id = ?`,
+       SET flow_level = $1, symptoms = $2, notes = $3, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4 AND user_id = $5`,
       [flowLevel, JSON.stringify(symptoms || []), notes, recordId, userId]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
         error: '记录不存在'
@@ -165,12 +168,12 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const recordId = req.params.id;
 
-    const [result] = await pool.execute(
-      'DELETE FROM period_records WHERE id = ? AND user_id = ?',
+    const result = await pool.query(
+      'DELETE FROM period_records WHERE id = $1 AND user_id = $2',
       [recordId, userId]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
         error: '记录不存在'
@@ -198,16 +201,16 @@ router.get('/stats', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const [stats] = await pool.execute(
+    const stats = await pool.query(
       `SELECT total_cycles, average_cycle_length, cycle_length_std,
               average_period_length, period_length_std, prediction_accuracy,
               data_sufficiency, last_period_start, last_period_end
        FROM user_cycle_stats
-       WHERE user_id = ?`,
+       WHERE user_id = $1`,
       [userId]
     );
 
-    if (stats.length === 0) {
+    if (stats.rows.length === 0) {
       return res.json({
         success: true,
         data: {
@@ -221,7 +224,7 @@ router.get('/stats', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      data: stats[0]
+      data: stats.rows[0]
     });
   } catch (error) {
     console.error('获取周期统计失败:', error);

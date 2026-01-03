@@ -16,19 +16,19 @@ const authenticateToken = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     // 验证用户是否存在且活跃
-    const [users] = await pool.execute(
-      'SELECT id, user_uuid, phone_number, email, nickname FROM users WHERE id = ? AND is_active = TRUE',
+    const users = await pool.query(
+      'SELECT id, user_uuid, phone_number, email, nickname FROM users WHERE id = $1 AND is_active = TRUE',
       [decoded.userId]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(401).json({
         success: false,
         error: '用户不存在或已禁用'
       });
     }
 
-    req.user = users[0];
+    req.user = users.rows[0];
     next();
   } catch (error) {
     return res.status(403).json({

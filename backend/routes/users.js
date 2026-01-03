@@ -16,25 +16,25 @@ router.get('/profile', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const [users] = await pool.execute(
-      'SELECT user_uuid as id, phone_number as phoneNumber, email, nickname, birth_date as birthDate, created_at as createdAt, last_login_at as lastLoginAt FROM users WHERE id = ?',
+    const users = await pool.query(
+      'SELECT user_uuid as id, phone_number as phoneNumber, email, nickname, birth_date as birthDate, created_at as createdAt, last_login_at as lastLoginAt FROM users WHERE id = $1',
       [userId]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: '用户不存在'
       });
     }
 
-    const [privacy] = await pool.execute(
-      'SELECT allow_data_analytics as allowDataAnalytics, allow_ml_training as allowMlTraining, data_retention_days as dataRetentionDays FROM user_privacy WHERE user_id = ?',
+    const privacy = await pool.query(
+      'SELECT allow_data_analytics as allowDataAnalytics, allow_ml_training as allowMlTraining, data_retention_days as dataRetentionDays FROM user_privacy WHERE user_id = $1',
       [userId]
     );
 
-    const user = users[0];
-    user.privacy = privacy[0] || {
+    const user = users.rows[0];
+    user.privacy = privacy.rows[0] || {
       allowDataAnalytics: true,
       allowMlTraining: true,
       dataRetentionDays: 365
@@ -68,12 +68,12 @@ router.put('/profile', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const { nickname, email, birthDate } = value;
 
-    const [result] = await pool.execute(
-      'UPDATE users SET nickname = ?, email = ?, birth_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    const result = await pool.query(
+      'UPDATE users SET nickname = $1, email = $2, birth_date = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4',
       [nickname, email, birthDate, userId]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({
         success: false,
         error: '用户不存在'
@@ -114,13 +114,13 @@ router.put('/privacy', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     const { allowDataAnalytics, allowMlTraining, dataRetentionDays } = value;
 
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `UPDATE user_privacy 
-       SET allow_data_analytics = COALESCE(?, allow_data_analytics),
-           allow_ml_training = COALESCE(?, allow_ml_training),
-           data_retention_days = COALESCE(?, data_retention_days),
+       SET allow_data_analytics = COALESCE($1, allow_data_analytics),
+           allow_ml_training = COALESCE($2, allow_ml_training),
+           data_retention_days = COALESCE($3, data_retention_days),
            updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = ?`,
+       WHERE user_id = $4`,
       [allowDataAnalytics, allowMlTraining, dataRetentionDays, userId]
     );
 
@@ -143,43 +143,43 @@ router.get('/dashboard', authenticateToken, async (req, res) => {
     const userId = req.user.id;
 
     // 获取周期统计
-    const [cycleStats] = await pool.execute(
+    const cycleStats = await pool.query(
       `SELECT total_cycles as totalCycles, average_cycle_length as avgCycleLength,
               cycle_length_std as cycleStd, prediction_accuracy as predictionAccuracy,
               data_sufficiency as dataSufficiency, last_period_start as lastPeriodStart,
               last_period_end as lastPeriodEnd
-       FROM user_cycle_stats WHERE user_id = ?`,
+       FROM user_cycle_stats WHERE user_id = $1`,
       [userId]
     );
 
     // 获取最近记录数量
-    const [recentRecords] = await pool.execute(
-      'SELECT COUNT(*) as count FROM period_records WHERE user_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)',
+    const recentRecords = await pool.query(
+      'SELECT COUNT(*) as count FROM period_records WHERE user_id = $1 AND record_date >= CURRENT_DATE - INTERVAL \'30 days\'',
       [userId]
     );
 
     // 获取连续记录天数
-    const [streakData] = await pool.execute(
+    const streakData = await pool.query(
       `SELECT 
-         DATEDIFF(CURDATE(), MAX(record_date)) as daysSinceLastRecord,
-         COUNT(DISTINCT record_date) as totalRecords
+         EXTRACT(DAY FROM (CURRENT_DATE - MAX(record_date)))::INTEGER as "daysSinceLastRecord",
+         COUNT(DISTINCT record_date) as "totalRecords"
        FROM period_records 
-       WHERE user_id = ?`,
+       WHERE user_id = $1`,
       [userId]
     );
 
     const dashboard = {
-      cycleStats: cycleStats[0] || {
+      cycleStats: cycleStats.rows[0] || {
         totalCycles: 0,
         avgCycleLength: null,
         cycleStd: null,
         predictionAccuracy: 0,
         dataSufficiency: 'low'
       },
-      recentRecords: recentRecords[0].count,
+      recentRecords: parseInt(recentRecords.rows[0].count),
       streak: {
-        daysSinceLastRecord: streakData[0].daysSinceLastRecord,
-        totalRecords: streakData[0].totalRecords
+        daysSinceLastRecord: streakData.rows[0].daysSinceLastRecord,
+        totalRecords: parseInt(streakData.rows[0].totalRecords)
       }
     };
 

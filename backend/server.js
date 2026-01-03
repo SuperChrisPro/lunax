@@ -5,6 +5,7 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
+const { testConnection } = require('./config/database');
 const authRoutes = require('./routes/auth');
 const periodRoutes = require('./routes/periods');
 const predictionRoutes = require('./routes/predictions');
@@ -68,7 +69,19 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`LunaX后端服务器运行在端口 ${PORT}`);
-  console.log(`环境: ${process.env.NODE_ENV}`);
-});
+// 初始化数据库连接并启动服务器（仅在非测试环境）
+if (process.env.NODE_ENV !== 'test') {
+  testConnection().then(connected => {
+    if (connected) {
+      app.listen(PORT, () => {
+        console.log(`LunaX后端服务器运行在端口 ${PORT}`);
+        console.log(`环境: ${process.env.NODE_ENV}`);
+      });
+    } else {
+      console.error('数据库连接失败，服务器无法启动');
+      process.exit(1);
+    }
+  });
+}
+
+module.exports = app;

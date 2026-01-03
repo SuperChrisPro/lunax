@@ -34,12 +34,12 @@ router.post('/register', async (req, res) => {
     const { phoneNumber, email, nickname, password } = value;
 
     // 检查手机号是否已存在
-    const [existing] = await pool.execute(
-      'SELECT id FROM users WHERE phone_number = ?',
+    const existing = await pool.query(
+      'SELECT id FROM users WHERE phone_number = $1',
       [phoneNumber]
     );
 
-    if (existing.length > 0) {
+    if (existing.rows.length > 0) {
       return res.status(409).json({
         success: false,
         error: '手机号已注册'
@@ -51,22 +51,24 @@ router.post('/register', async (req, res) => {
     const userUuid = uuidv4();
 
     // 插入用户
-    const [result] = await pool.execute(
+    const result = await pool.query(
       `INSERT INTO users (user_uuid, phone_number, email, nickname, password)
-       VALUES (?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
       [userUuid, phoneNumber, email, nickname || phoneNumber, hashedPassword]
     );
 
+    const userId = result.rows[0].id;
+
     // 创建用户周期统计记录
-    await pool.execute(
-      'INSERT INTO user_cycle_stats (user_id) VALUES (?)',
-      [result.insertId]
+    await pool.query(
+      'INSERT INTO user_cycle_stats (user_id) VALUES ($1)',
+      [userId]
     );
 
     // 创建用户隐私设置
-    await pool.execute(
-      'INSERT INTO user_privacy (user_id) VALUES (?)',
-      [result.insertId]
+    await pool.query(
+      'INSERT INTO user_privacy (user_id) VALUES ($1)',
+      [userId]
     );
 
     res.status(201).json({
@@ -101,19 +103,19 @@ router.post('/login', async (req, res) => {
 
     const { phoneNumber, password } = value;
 
-    const [users] = await pool.execute(
-      'SELECT id, user_uuid, phone_number, nickname, password FROM users WHERE phone_number = ? AND is_active = TRUE',
+    const users = await pool.query(
+      'SELECT id, user_uuid, phone_number, nickname, password FROM users WHERE phone_number = $1 AND is_active = TRUE',
       [phoneNumber]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(401).json({
         success: false,
         error: '用户不存在或密码错误'
       });
     }
 
-    const user = users[0];
+    const user = users.rows[0];
     const isValidPassword = await bcrypt.compare(password, user.password);
 
     if (!isValidPassword) {
@@ -124,8 +126,8 @@ router.post('/login', async (req, res) => {
     }
 
     // 更新最后登录时间
-    await pool.execute(
-      'UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?',
+    await pool.query(
+      'UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1',
       [user.id]
     );
 
@@ -170,12 +172,12 @@ router.post('/verify', async (req, res) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    const [users] = await pool.execute(
-      'SELECT user_uuid, phone_number, nickname FROM users WHERE id = ? AND is_active = TRUE',
+    const users = await pool.query(
+      'SELECT user_uuid, phone_number, nickname FROM users WHERE id = $1 AND is_active = TRUE',
       [decoded.userId]
     );
 
-    if (users.length === 0) {
+    if (users.rows.length === 0) {
       return res.status(401).json({
         success: false,
         error: '用户不存在或已禁用'
@@ -184,7 +186,7 @@ router.post('/verify', async (req, res) => {
 
     res.json({
       success: true,
-      data: users[0]
+      data: users.rows[0]
     });
   } catch (error) {
     res.status(401).json({

@@ -1,58 +1,53 @@
-const { MongoClient } = require('mongodb');
+const { Pool } = require('pg');
+require('dotenv').config();
 
-let db;
-let client;
+let pool;
 
-async function connect() {
-  if (db) return db;
-  
-  const uri = `mongodb://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/lunax_db?authSource=admin`;
-  
-  client = new MongoClient(uri, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-    serverSelectionTimeoutMS: 30000,
-    socketTimeoutMS: 45000
-  });
+function getPool() {
+  if (!pool) {
+    pool = new Pool({
+      host: process.env.DB_HOST || 'localhost',
+      port: process.env.DB_PORT || 5432,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASS,
+      database: process.env.DB_NAME,
+      max: 20, // 最大连接数
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
 
-  try {
-    await client.connect();
-    db = client.db('lunax_db');
-    console.log('MongoDB连接成功');
-    return db;
-  } catch (error) {
-    console.error('MongoDB连接失败:', error);
-    process.exit(1);
+    // 连接池错误处理
+    pool.on('error', (err, client) => {
+      console.error('PostgreSQL 连接池错误:', err);
+    });
   }
-}
-
-async function close() {
-  if (client) {
-    await client.close();
-    client = null;
-    db = null;
-  }
+  return pool;
 }
 
 // 测试数据库连接
 async function testConnection() {
   try {
-    const testDb = await connect();
-    await testDb.command({ ping: 1 });
-    console.log('MongoDB连接测试成功');
+    const testPool = getPool();
+    const result = await testPool.query('SELECT NOW()');
+    console.log('PostgreSQL连接测试成功:', result.rows[0].now);
     return true;
   } catch (error) {
-    console.error('MongoDB连接测试失败:', error);
+    console.error('PostgreSQL连接测试失败:', error);
     return false;
   }
 }
 
-module.exports = { 
-  connect, 
-  close,
-  testConnection,
-  getDb: () => {
-    if (!db) throw new Error('数据库未连接');
-    return db;
+// 关闭连接池
+async function close() {
+  if (pool) {
+    await pool.end();
+    pool = null;
   }
+}
+
+module.exports = { 
+  pool: getPool(),
+  getPool,
+  close,
+  testConnection
 };
